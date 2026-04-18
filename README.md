@@ -1,2 +1,3 @@
-# my-agent-skills
-Agent skills just for me
+# My Agent Skills
+
+[Agent Skills](https://agentskills.io/home) just for me.
