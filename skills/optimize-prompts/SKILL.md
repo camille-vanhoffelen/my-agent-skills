@@ -1,6 +1,6 @@
 ---
 name: optimize-prompts
-description: Use this skill whenever the user wants to optimize, improve, or tune prompts — including when they ask "how do I write my evaluator?", "what goes in the dataset?", "how do I set max_metric_calls?", or any question about GEPA-based prompt optimization. This skill covers optimize_anything_for_agents() end-to-end: writing evaluators, preparing datasets, calling the function, reading results, and troubleshooting. Trigger it even if the user only asks about one component (e.g. just the evaluator or just the dataset) — the full context helps give better answers.
+description: Use this skill whenever the user wants to make their prompts better — whether they say "optimize my prompt", "tune this system prompt", "improve accuracy", or "my prompt isn't working well enough". Also trigger when they ask about writing evaluators, preparing datasets, or any part of the prompt optimization workflow. This skill covers the full loop end-to-end using an evaluator-driven feedback loop (optimize_anything_for_agents): writing evaluators, preparing datasets, calling the function, reading results, and troubleshooting. Trigger it even if the user only asks about one component (e.g. just the evaluator or just the dataset) — the full context helps give better answers.
 version: 1.1.0
 allowed-tools: Bash(python*)
 ---
@@ -29,6 +29,10 @@ This skill bundles `scripts/optimize_anything_for_agents.py` directly — no add
 ```bash
 pip install gepa litellm
 ```
+
+### LLM authentication
+
+Before calling `optimize_anything_for_agents()`, confirm that LLM credentials are configured — litellm reads them from environment variables (e.g. `ANTHROPIC_API_KEY` for the default Claude model). See the [litellm provider docs](https://docs.litellm.ai/docs/providers) for the full list.
 
 ### Using the bundled file
 
@@ -60,12 +64,14 @@ Predict Amazon product review ratings (1–5 stars) from review text. The prompt
 
 | File | Role |
 |------|------|
-| `assets/example_system.txt.jinja2` | Seed system prompt (template, rendered with `review` and `reviewer` variables) |
-| `assets/example_user.txt.jinja2` | Seed user prompt (template, same variables) |
+| `assets/example_system.txt.jinja2` | Seed system prompt (template, rendered with `review` and `reviewer` variables) — intentionally bad |
+| `assets/example_user.txt.jinja2` | Seed user prompt (template, same variables) — intentionally bad |
 | `assets/example_dataset_train.jsonl` | Training examples — one JSON object per line with `rating`, `review`, `reviewer` |
 | `assets/example_dataset_dev.jsonl` | Validation (held-out) examples — same schema |
 | `scripts/example_reviewer.py` | The LLM workflow being optimized: `AutoReviewer` runs Claude on a review and returns a predicted rating |
 | `scripts/example_optimizer.py` | The optimization script: wires up the evaluator, loads datasets, calls `optimize_anything_for_agents()`, and writes the best prompts back to `assets/` |
+
+The seed prompts are intentionally bad — they ask for a rating out of 100 in JSON format, but the dataset uses 1–5 star ratings and the evaluator expects a bare integer. This demonstrates that `optimize_anything_for_agents()` can fix broken prompts through error introspection: the evaluator captures the failure in `side_info`, the reflection LM reads it, and subsequent candidates correct the mistakes.
 
 Read `scripts/example_optimizer.py` first — it's the thing this skill helps users write. Then read `scripts/example_reviewer.py` to understand the workflow it wraps.
 
@@ -91,7 +97,40 @@ Read `scripts/optimize_anything_for_agents.py` for the full signature and docstr
 
 **`max_metric_calls`** — total evaluation budget. Good default: `len(dataset) * 3`.
 
+### Cost awareness
+
+Each metric call invokes the evaluator once — and if the evaluator itself calls an LLM, that's one LLM call per metric call. On top of that, the reflection LM makes several calls to propose improved candidates. For example, with `max_metric_calls=60` and a Claude-based evaluator, expect roughly 60 evaluator LLM calls plus 5–10 reflection calls. To keep costs down during iteration, use a smaller `dataset`, lower `max_metric_calls`, or switch `lm` to a cheaper model — then do a final pass with a stronger model and fuller dataset.
+
 **`background`** — pass the last few entries from `PROMPT_CHANGELOG.md` here so the reflection LM knows what was already tried.
+
+---
+
+## Evaluator design patterns
+
+The evaluator is the most important part of the optimization — it defines what "better" means. It produces two things: a numerical score and a `side_info` dict. Both matter, and they serve different purposes.
+
+### Numerical score
+
+Higher is better. The score should be **informative** — meaning the reflection LM can distinguish "almost right" from "completely wrong." Prefer partial credit over binary pass/fail whenever possible.
+
+Examples of informative scores:
+- **Classification**: accuracy, F1, or weighted agreement (e.g. Cohen's kappa) rather than a bare 0/1
+- **Regression**: negative MSE or negative MAE — negate because GEPA maximizes. Near-misses score higher than wild misses, giving the optimizer useful gradient.
+- **LLM-as-judge**: ask a second model to rate on a rubric (1-5 or 0-100) across criteria you define. More expensive per call, but often the only option for open-ended generation tasks.
+
+The key principle: if two wrong answers are wrong in different ways, the score should reflect that. A flat 0.0 for all failures tells the reflection LM nothing about which direction to move.
+
+### `side_info` dict
+
+This is what the reflection LM actually *reads* to understand the results. The score tells it *how good*; `side_info` tells it *what happened*, *how the evaluator arrived at the score*, and *why the candidate succeeded or failed*.
+
+Return as much information as you can — even (especially) when the evaluator fails. Include:
+- **The input** that was evaluated
+- **The model's raw response** before any parsing
+- **The parsed/extracted answer** and the expected answer
+- **Error tracebacks** when exceptions occur — a stack trace tells the reflection LM exactly what broke
+
+Use descriptive key names (`"Response"`, `"Expected"`, `"Error"`) rather than abbreviations. Always catch exceptions and return a worst-case score with the traceback in `side_info["Error"]` rather than raising — a crashed evaluator gives the reflection LM zero signal. The worked example in `scripts/example_optimizer.py` demonstrates this pattern.
 
 ## Return value
 

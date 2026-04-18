@@ -67,7 +67,7 @@ def optimize_anything_for_agents(
             seedless mode; optional but helpful otherwise.
         background: Additional context passed to the reflection LM.
         lm: LiteLLM model string used for both reflection proposals and the
-            final summary.  Defaults to claude-sonnet-4-5.
+            final summary.  Defaults to claude-sonnet-4-6.
         max_metric_calls: Total evaluation budget (default: 30).
         reflection_minibatch_size: Number of examples shown to the reflection
             LM per step (default: 3).  Smaller batches produce focused
@@ -204,8 +204,15 @@ Write a concise summary covering:
 Keep the tone factual and analytical, use bullet points where appropriate.
 """
 
-    response = completion(
-        model=lm,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content
+    try:
+        response = completion(
+            model=lm,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return (
+            f"Summary generation failed: {e}\n"
+            f"Seed score: {seed_score}, Best score: {best_score}.\n"
+            f"See result.result for raw optimization data."
+        )

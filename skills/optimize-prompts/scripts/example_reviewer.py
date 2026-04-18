@@ -6,7 +6,9 @@ import numpy as np
 from litellm import completion
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
-MODEL = "anthropic/claude-sonnet-4-5-20250929"
+MODEL = "anthropic/claude-sonnet-4-6"
+
+_ENV = jinja2.Environment(autoescape=False, trim_blocks=True, lstrip_blocks=True)
 
 
 class AutoReviewer:
@@ -14,15 +16,11 @@ class AutoReviewer:
         system_prompt_template_text = (
             ASSETS_DIR / "example_system.txt.jinja2"
         ).read_text()
-        user_prompt_template_text = (
-            ASSETS_DIR / "example_user.txt.jinja2"
-        ).read_text()
-        self.system_prompt_template = jinja2.Environment(
-            autoescape=False, trim_blocks=True, lstrip_blocks=True
-        ).from_string(source=system_prompt_template_text)
-        self.user_prompt_template = jinja2.Environment(
-            autoescape=False, trim_blocks=True, lstrip_blocks=True
-        ).from_string(source=user_prompt_template_text)
+        user_prompt_template_text = (ASSETS_DIR / "example_user.txt.jinja2").read_text()
+        self.system_prompt_template = _ENV.from_string(
+            source=system_prompt_template_text
+        )
+        self.user_prompt_template = _ENV.from_string(source=user_prompt_template_text)
 
     def predict(self, review: str, reviewer: str) -> tuple[int, str]:
         system_prompt = self.system_prompt_template.render(
